@@ -97,6 +97,7 @@ namespace AzureSignTool
         public string[] Files { get; set; } = Array.Empty<string>();
 
         private HashSet<string> _allFiles;
+        private AsymmetricAlgorithm keyVault;
         public HashSet<string> AllFiles
         {
             get
@@ -279,8 +280,19 @@ namespace AzureSignTool
                 }
                 logger.LogTrace("Creating context");
 
-                using (var keyVault =  RSAFactory.Create(materialized.TokenCredential, materialized.KeyId, materialized.PublicCertificate))
-                using (var signer = new AuthenticodeKeyVaultSigner(keyVault, materialized.PublicCertificate, FileDigestAlgorithm, timeStampConfiguration, certificates))
+                bool rsakey = string.IsNullOrEmpty(materialized.PublicCertificate.GetECDsaPublicKey().ToString());
+                try
+                {
+                    if (rsakey)
+                    {
+                        keyVault = RSAFactory.Create(materialized.TokenCredential, materialized.KeyId, materialized.PublicCertificate);
+                    }
+                    else
+                    {
+                        keyVault = ECDsaFactory.Create(materialized.TokenCredential, materialized.KeyId, materialized.PublicCertificate);
+                    }
+
+                    using (var signer = new AuthenticodeKeyVaultSigner(keyVault, materialized.PublicCertificate, FileDigestAlgorithm, timeStampConfiguration, certificates))
                 {
                     Parallel.ForEach(AllFiles, options, () => (succeeded: 0, failed: 0), (filePath, pls, state) =>
                     {
@@ -335,6 +347,11 @@ namespace AzureSignTool
                         Interlocked.Add(ref failed, result.failed);
                         Interlocked.Add(ref succeeded, result.succeeded);
                     });
+                }
+                }
+                finally
+                {
+                    keyVault.Dispose();
                 }
                 logger.LogInformation($"Successful operations: {succeeded}");
                 logger.LogInformation($"Failed operations: {failed}");
